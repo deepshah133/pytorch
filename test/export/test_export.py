@@ -6775,7 +6775,6 @@ def forward(self, x, y):
                 self.assertTrue(False)
 
     @testing.expectedFailureNonStrict
-    @testing.expectedFailureTrainingIRToRunDecomp
     @testing.expectedFailureTrainingIRToRunDecompNonStrict  # unbacked symint not tracked?
     @testing.expectedFailureSerDer  # T195866111
     def test_hints_wrapper(self):
