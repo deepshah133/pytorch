@@ -26,6 +26,7 @@ from torch._export.utils import (
     get_param,
     is_buffer,
     is_param,
+    move_to_device,
     register_dataclass_as_pytree_node,
 )
 from torch._inductor.compile_fx import split_const_gm
@@ -43,6 +44,7 @@ from torch.testing import FileCheck
 from torch.testing._internal.common_cuda import (
     PLATFORM_SUPPORTS_FLASH_ATTENTION,
     SM90OrLater,
+    TEST_CUDA,
 )
 from torch.testing._internal.common_device_type import onlyCPU, onlyCUDA
 from torch.testing._internal.common_utils import (
@@ -6787,6 +6789,7 @@ def forward(self, x, y):
             if node.op == "call_function":
                 self.assertTrue(False)
 
+    @unittest.skipIf(not TEST_CUDA, "requires cuda")
     def test_exported_program_move_to_device(self):
         class Model(torch.nn.Module):
             def __init__(self, size=4, h_dim=10, **kwargs):
@@ -6797,15 +6800,30 @@ def forward(self, x, y):
                 _, states = self.rnn(x)
                 return states
 
+        # move the exported program from cpu to cuda:0
         mod = Model()
         example_inputs = (torch.rand(1, 10, 4),)
         ep = export(mod, example_inputs)
-        new_device = torch.device("cuda:0")
-        ep.move_to(device=new_device)
+        location = torch.device("cuda:0")
+        ep = move_to_device(ep, location=location)
         gm = ep.module()
-        test_inputs = (torch.rand(1, 10, 4).to(new_device),)
+        test_inputs = (torch.rand(1, 10, 4).to("cuda:0"),)
         outputs = gm(*test_inputs)
-        self.assertEqual(outputs.device, new_device)
+        self.assertEqual(outputs.device, torch.device("cuda:0"))
+        # move it back to cpu
+        location = "cpu"
+        ep = move_to_device(ep, location=location)
+        gm = ep.module()
+        test_inputs = (torch.rand(1, 10, 4).to("cpu"),)
+        outputs = gm(*test_inputs)
+        self.assertEqual(outputs.device, torch.device("cpu"))
+        # move it to cuda:0 again
+        location = {"cpu": "cuda:0"}
+        ep = move_to_device(ep, location=location)
+        gm = ep.module()
+        test_inputs = (torch.rand(1, 10, 4).to("cuda:0"),)
+        outputs = gm(*test_inputs)
+        self.assertEqual(outputs.device, torch.device("cuda:0"))
 
 
 @unittest.skipIf(not torchdynamo.is_dynamo_supported(), "dynamo isn't support")

@@ -6,7 +6,7 @@ import math
 import operator
 import re
 from inspect import Parameter
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
@@ -670,3 +670,58 @@ def _detect_fake_mode_from_gm(
                 fake_vals.append(fake_val)
 
     return detect_fake_mode(fake_inps + fake_vals)
+
+
+def move_to_device(
+    ep: ExportedProgram, location: Union[torch.device, str, Dict[str, str]]
+) -> ExportedProgram:
+    """
+    Move the exported program to the given device.
+
+    Args:
+        ep (ExportedProgram): The exported program to move.
+        location (Union[torch.device, str, Dict[str, str]]): The device to move the exported program to.
+            If a string, it is interpreted as a device name.
+            If a dict, it is interpreted as a mapping from
+            the existing device to the intended one
+
+    Returns:
+        ExportedProgram: The moved exported program.
+    """
+    # move all the parameters to the new location
+    for k, v in ep.state_dict.items():
+        if isinstance(v, torch.nn.Parameter):
+            if isinstance(location, dict):
+                ep._state_dict[k] = torch.nn.Parameter(v.to(location[str(v.device)]))
+            else:
+                ep._state_dict[k] = torch.nn.Parameter(v.to(location))
+        else:
+            if isinstance(location, dict):
+                ep._state_dict[k] = v.to(location[str(v.device)])
+            else:
+                ep._state_dict[k] = v.to(location)
+
+    for node in ep.graph.nodes:
+        # change all the nodes with burnt-in device kwargs
+        if "device" in node.kwargs:
+            kwargs = node.kwargs.copy()
+            if isinstance(location, dict):
+                kwargs["device"] = location[str(node.kwargs["device"])]
+            else:
+                kwargs["device"] = location
+            node.kwargs = kwargs
+        # change all the tensor metadata devices
+        for k, v in node.meta.items():
+            if isinstance(v, torch.Tensor):
+                if isinstance(location, dict):
+                    v = v.to(location[str(v.device)])
+                else:
+                    v = v.to(location)
+            elif isinstance(v, tuple):
+                for v_i in v:
+                    if isinstance(v_i, torch.Tensor):
+                        if isinstance(location, dict):
+                            v_i = v_i.to(location[str(v_i.device)])
+                        else:
+                            v_i = v_i.to(location)
+    return ep
